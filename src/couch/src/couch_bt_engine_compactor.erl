@@ -44,13 +44,22 @@
 }).
 
 
+-ifdef(TEST).
+-define(COMP_EVENT(Name), couch_bt_engine_compactor_ev:event(Name)).
+-else.
+-define(COMP_EVENT(Name), ignore).
+-endif.
+
+
 start(#st{} = St, DbName, Options, Parent) ->
     erlang:put(io_priority, {db_compact, DbName}),
     couch_log:debug("Compaction process spawned for db \"~s\"", [DbName]),
 
     couch_db_engine:trigger_on_compact(DbName),
 
+    ?COMP_EVENT(init),
     {ok, InitCompSt} = open_compaction_files(DbName, St, Options),
+    ?COMP_EVENT(files_opened),
 
     Stages = [
         fun copy_purge_info/1,
@@ -59,7 +68,8 @@ start(#st{} = St, DbName, Options, Parent) ->
         fun sort_meta_data/1,
         fun commit_compaction_data/1,
         fun copy_meta_data/1,
-        fun compact_final_sync/1
+        fun compact_final_sync/1,
+        fun verify_compaction/1
     ],
 
     FinalCompSt = lists:foldl(fun(Stage, CompSt) ->
@@ -74,6 +84,7 @@ start(#st{} = St, DbName, Options, Parent) ->
     ok = couch_bt_engine:decref(FinalNewSt),
     ok = couch_file:close(MetaFd),
 
+    ?COMP_EVENT(before_notify),
     Msg = {compact_done, couch_bt_engine, FinalNewSt#st.filepath},
     gen_server:cast(Parent, Msg).
 
@@ -146,6 +157,7 @@ copy_purge_info(#comp_st{} = CompSt) ->
         new_st = NewSt,
         retry = Retry
     } = CompSt,
+    ?COMP_EVENT(purge_init),
     MinPurgeSeq = couch_util:with_db(DbName, fun(Db) ->
         couch_db:get_minimum_purge_seq(Db)
     end),
@@ -180,6 +192,7 @@ copy_purge_info(#comp_st{} = CompSt) ->
     {NewStAcc, Infos, _, _} = FinalAcc,
     FinalNewSt = copy_purge_infos(OldSt, NewStAcc, Infos, MinPurgeSeq, Retry),
 
+    ?COMP_EVENT(purge_done),
     CompSt#comp_st{
         new_st = FinalNewSt
     }.
@@ -322,12 +335,15 @@ copy_compact(#comp_st{} = CompSt) ->
         couch_task_status:set_update_frequency(500)
     end,
 
+    ?COMP_EVENT(seq_init),
     {ok, _, {NewSt2, Uncopied, _, _}} =
         couch_btree:foldl(St#st.seq_tree, EnumBySeqFun,
             {NewSt, [], 0, 0},
             [{start_key, NewUpdateSeq + 1}]),
 
     NewSt3 = copy_docs(St, NewSt2, lists:reverse(Uncopied), Retry),
+
+    ?COMP_EVENT(seq_done),
 
     % Copy the security information over
     SecProps = couch_bt_engine:get_security(St),
@@ -392,6 +408,7 @@ copy_docs(St, #st{} = NewSt, MixedInfos, Retry) ->
         TotalAttSize = lists:foldl(fun({_, S}, A) -> S + A end, 0, FinalAtts),
         NewActiveSize = FinalAS + TotalAttSize,
         NewExternalSize = FinalES + TotalAttSize,
+        ?COMP_EVENT(seq_copy),
         Info#full_doc_info{
             rev_tree = NewRevTree,
             sizes = #size_info{
@@ -478,7 +495,9 @@ copy_doc_attachments(#st{} = SrcSt, SrcSp, DstSt) ->
 
 
 sort_meta_data(#comp_st{new_st = St0} = CompSt) ->
+    ?COMP_EVENT(md_sort_init),
     {ok, Ems} = couch_emsort:merge(St0#st.id_tree),
+    ?COMP_EVENT(md_sort_done),
     CompSt#comp_st{
         new_st = St0#st{
             id_tree = Ems
@@ -505,11 +524,13 @@ copy_meta_data(#comp_st{new_st = St} = CompSt) ->
         rem_seqs=[],
         infos=[]
     },
+    ?COMP_EVENT(md_copy_init),
     Acc = merge_docids(Iter, Acc0),
     {ok, IdTree} = couch_btree:add(Acc#merge_st.id_tree, Acc#merge_st.infos),
     {ok, SeqTree} = couch_btree:add_remove(
         Acc#merge_st.seq_tree, [], Acc#merge_st.rem_seqs
     ),
+    ?COMP_EVENT(md_copy_done),
     CompSt#comp_st{
         new_st = St#st{
             id_tree = IdTree,
@@ -520,19 +541,28 @@ copy_meta_data(#comp_st{new_st = St} = CompSt) ->
 
 compact_final_sync(#comp_st{new_st = St0} = CompSt) ->
 <<<<<<< HEAD
+<<<<<<< HEAD
     {ok, St1} = couch_bt_engine:commit_data(NewSt5),
 =======
     ?COMP_EVENT(before_final_sync),
     {ok, St1} = couch_bt_engine:commit_data(St0),
     ?COMP_EVENT(after_final_sync),
 >>>>>>> 8cc39d866... fixup! Simplify compaction state management
+=======
+    ?COMP_EVENT(before_final_sync),
+    {ok, St1} = couch_bt_engine:commit_data(NewSt5),
+    ?COMP_EVENT(after_final_sync),
+>>>>>>> 3fbc6e0ae... Implement compactor test suite
     CompSt#comp_st{
         new_st = St1
     }.
 
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
+=======
+>>>>>>> 3fbc6e0ae... Implement compactor test suite
 verify_compaction(#comp_st{} = CompSt) ->
     #comp_st{
         db_name = DbName,
@@ -551,7 +581,11 @@ verify_compaction(#comp_st{} = CompSt) ->
     } = OldIdReds0,
     #size_info{
         external = OldExternalSize
+<<<<<<< HEAD
     } = couch_db_updater:upgrade_sizes(OldSizes),
+=======
+    } = upgrade_sizes(OldSizes),
+>>>>>>> 3fbc6e0ae... Implement compactor test suite
     OldIdReds = {OldDocCount, OldDelDocCount, OldExternalSize},
 
     {
@@ -576,7 +610,10 @@ verify_compaction(#comp_st{} = CompSt) ->
     CompSt.
 
 
+<<<<<<< HEAD
 >>>>>>> 8cc39d866... fixup! Simplify compaction state management
+=======
+>>>>>>> 3fbc6e0ae... Implement compactor test suite
 open_compaction_file(FilePath) ->
     case couch_file:open(FilePath, [nologifmissing]) of
         {ok, Fd} ->
@@ -680,6 +717,7 @@ merge_docids(Iter, #merge_st{curr=Curr}=Acc) ->
                 rem_seqs = Seqs ++ Acc#merge_st.rem_seqs,
                 curr = NewCurr
             },
+            ?COMP_EVENT(md_copy_row),
             merge_docids(NextIter, Acc1);
         {finished, FDI, Seqs} ->
             Acc#merge_st{
