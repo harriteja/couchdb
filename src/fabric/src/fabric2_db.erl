@@ -227,13 +227,6 @@ delete(DbName, Options) ->
     end.
 
 
-deleted_dbs_info(DbName, Options) ->
-    Result = fabric2_fdb:transactional(DbName, Options, fun(TxDb) ->
-        fabric2_fdb:deleted_dbs_info(TxDb)
-    end),
-    {ok, lists:reverse(Result)}.
-
-
 undelete(DbName, TgtDbName, TimeStamp, Options) ->
     case validate_dbname(TgtDbName) of
         ok ->
@@ -359,6 +352,13 @@ list_dbs_info(UserFun, UserAcc0, Options) ->
             {ok, FinalUserAcc}
         end
     end).
+
+
+deleted_dbs_info(DbName, Options) ->
+    Result = fabric2_fdb:transactional(DbName, Options, fun(TxDb) ->
+        fabric2_fdb:deleted_dbs_info(TxDb)
+    end),
+    {ok, lists:reverse(Result)}.
 
 
 is_admin(Db, {SecProps}) when is_list(SecProps) ->
@@ -1115,8 +1115,7 @@ make_deleted_dbs_info(DbName, TimeStamp, Props) ->
             {disk_size, 0},
             {instance_start_time, <<"0">>},
             {purge_seq, 0}
-            ]}
-        }
+            ]}}
     ],
 
     lists:foldl(fun({Key, Val}, Acc) ->
